@@ -22,20 +22,36 @@
 
 (defn fetch-channel-history [connection channel-id]
   (loop [batch   (clj-slack.conversations/history connection channel-id)
-         history []]
-    (let [history (apply conj history (:messages batch))]
+         history ()]
+    (let [history (into history (:messages batch))]
       (if (:has_more batch)
         (let [cursor    (:next_cursor (:response_metadata batch))
               new-batch (clj-slack.conversations/history connection channel-id {:cursor cursor})]
           (recur new-batch history))
         history))))
 
-(defn fetch-logs [connection]
+(defn fetch-logs [target connection]
+  (.mkdirs (io/file target))
   (let [conversations (clj-slack.conversations/list connection)
-        channel-ids   (map #(:id %) (:channels conversations))]
-    (for [channel-id channel-ids]
+        channel-ids   (map :id (:channels conversations))]
+    (doseq [channel-id channel-ids]
+      (println "Fetching" channel-id)
       (let [history (fetch-channel-history connection channel-id)]
-        (with-open [file (io/writer (str "/tmp/channels/" channel-id ".txt"))]
-          (doseq [message (reverse history)]
+        (with-open [file (io/writer (str target "/" channel-id ".txt"))]
+          (doseq [message history]
             (cheshire/generate-stream message file)
             (.write file "\n")))))))
+
+
+(comment
+
+  (fetch-logs "/tmp/channels" connection)
+
+  )
+
+
+;; |          | lazy-seq | nil (side effects) |
+;; |----------|----------|--------------------|
+;; | function | map      | run!               |
+;; | macro    | for      | doseq              |
+
