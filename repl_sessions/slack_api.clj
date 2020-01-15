@@ -1,7 +1,5 @@
-(require '[clojure.string :as str]
-         '[clj-slack.users]
-         '[clj-slack.im]
-         '[clj-slack.channels]
+(require '[clj-slack.users]
+         '[clj-slack.conversations]
          '[cheshire.core :as cheshire]
          '[clojure.java.io :as io])
 
@@ -9,28 +7,10 @@
 
 (def connection {:api-url "https://slack.com/api" :token slack-token})
 
-(clj-slack.users/list connection)
-
-(clj-slack.im/history connection "DN4E76Y9G")
-
-(clj-slack.channels/list connection)
-
-(def result (clj-slack.channels/history connection "CN8QF28C8"))
-
-(:ts (last (:messages result)))
-
-(def result (clj-slack.channels/history connection "CN8QF28C8" {:latest (:ts (last (:messages result)))
-                                                                :count "1000"}))
-
-(:messages result)
-
-(with-open [file (io/writer "/tmp/test.txt")]
-  (doseq [message (:messages result)]
-    (cheshire/generate-stream message file)
-    (.write file "\n")
-    )
-  )
-
+;; (with-open [file (io/writer "/tmp/test.txt")]
+;;   (doseq [message (:messages result)]
+;;     (cheshire/generate-stream message file)
+;;     (.write file "\n")))
 
 ;; - for every channel
 ;; - fetch complete history
@@ -39,3 +19,23 @@
 
 ;; - save channel information to a file
 ;; - save user information to a file
+
+(defn fetch-channel-history [connection channel-id]
+  (loop [batch   (clj-slack.conversations/history connection channel-id)
+         history []]
+    (let [history (apply conj history (:messages batch))]
+      (if (:has_more batch)
+        (let [cursor    (:next_cursor (:response_metadata batch))
+              new-batch (clj-slack.conversations/history connection channel-id {:cursor cursor})]
+          (recur new-batch history))
+        history))))
+
+(defn fetch-logs [connection]
+  (let [conversations (clj-slack.conversations/list connection)
+        channel-ids   (map #(:id %) (:channels conversations))]
+    (for [channel-id channel-ids]
+      (let [history (fetch-channel-history connection channel-id)]
+        (with-open [file (io/writer (str "/tmp/channels/" channel-id ".txt"))]
+          (doseq [message (reverse history)]
+            (cheshire/generate-stream message file)
+            (.write file "\n")))))))
