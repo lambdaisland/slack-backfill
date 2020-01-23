@@ -11,17 +11,41 @@
               *out*          writer]
       (pprint/pprint data))))
 
-(defn fetch-channels [target connection]
-  (.mkdirs (io/file target))
-  (println "Fetching channels data")
-  (let [channels (clj-slack.conversations/list connection)]
-    (write-edn (str target "/channels.edn") channels)))
+(defn user->tx [{:keys [id name is_admin is_owner profile]}]
+  (let [{:keys [image_512 email real_name_normalized image_48 image_192
+                real_name image_72 image_24 avatar_hash image_32 display_name
+                display_name_normalized]} profile]
+    (->> (merge #:user {:slack-id  id
+                        :name      name
+                        :real-name real_name
+                        :admin?    is_admin
+                        :owner?    is_owner}
+                #:user-profile {:email                   email,
+                                :avatar-hash             avatar_hash,
+                                :image-32                image_32,
+                                :image-24                image_24,
+                                :image-192               image_192,
+                                :image-48                image_48,
+                                :real-name-normalized    real_name_normalized,
+                                :display-name-normalized display_name_normalized,
+                                :display-name            display_name,
+                                :image-72                image_72,
+                                :real-name               real_name,
+                                :image-512               image_512})
+         (remove (comp nil? val))
+         (into {}))))
 
 (defn fetch-users [target connection]
   (.mkdirs (io/file target))
   (println "Fetching users data")
   (let [users (clj-slack.users/list connection)]
     (write-edn (str target "/users.edn") users)))
+
+(defn channel->tx [{:keys [id name created creator]}]
+  #:channel {:slack-id id
+             :name     name
+             :created  created
+             :creator  [:user/slack-id creator]})
 
 (defn fetch-channel-history [connection channel-id]
   (loop [batch   (clj-slack.conversations/history connection channel-id)
