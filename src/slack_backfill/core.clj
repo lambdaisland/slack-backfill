@@ -70,15 +70,17 @@
             (recur new-batch channels))
           (->> (map channel->tx channels)
                (write-edn filepath)))))))
+
 (defn fetch-channel-history [connection channel-id]
-  (loop [batch   (clj-slack.conversations/history connection channel-id)
-         history ()]
-    (let [history (into history (:messages batch))]
-      (if (:has_more batch)
-        (let [cursor    (:next_cursor (:response_metadata batch))
-              new-batch (clj-slack.conversations/history connection channel-id {:cursor cursor})]
-          (recur new-batch history))
-        history))))
+  (let [fetch-batch (partial clj-slack.conversations/history connection channel-id)]
+    (loop [batch   (fetch-batch)
+           history ()]
+      (let [history (into history (:messages batch))]
+        (if (contains? batch :has_more)
+          (let [cursor    (get-in batch [:response_metadata :next_cursor])
+                new-batch (fetch-batch {:cursor cursor})]
+            (recur new-batch history))
+          history)))))
 
 (defn fetch-logs [target connection]
   (let [logs-target (str target "/logs")]
