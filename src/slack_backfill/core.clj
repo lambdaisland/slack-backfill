@@ -42,13 +42,13 @@
     (println "Fetching users data")
     (loop [batch (fetch-batch)
            users ()]
-      (let [users (into users (:members batch))]
-        (if (contains? batch :has_more)
-          (let [cursor    (get-in batch [:response_metadata :next_cursor])
-                new-batch (fetch-batch {:cursor cursor})]
-            (recur new-batch users))
+      (let [users (into users (:members batch))
+            cursor (get-in batch [:response_metadata :next_cursor])]
+        (if (or (nil? cursor) (empty? cursor))
           (->> (map user->tx users)
-               (write-edn filepath)))))))
+               (write-edn filepath))
+          (let [new-batch (fetch-batch {:cursor cursor})]
+            (recur new-batch users)))))))
 
 (defn channel->tx [{:keys [id name created creator]}]
   #:channel {:slack-id id
@@ -63,24 +63,24 @@
     (println "Fetching channels data")
     (loop [batch    (fetch-batch)
            channels ()]
-      (let [channels (into channels (:channels batch))]
-        (if (contains? batch :has_more)
-          (let [cursor    (get-in batch [:response_metadata :next_cursor])
-                new-batch (fetch-batch {:cursor cursor})]
-            (recur new-batch channels))
+      (let [channels (into channels (:channels batch))
+            cursor (get-in batch [:response_metadata :next_cursor])]
+        (if (or (nil? cursor) (empty? cursor))
           (->> (map channel->tx channels)
-               (write-edn filepath)))))))
+               (write-edn filepath))
+          (let [new-batch (fetch-batch {:cursor cursor})]
+            (recur new-batch channels)))))))
 
 (defn fetch-channel-history [connection channel-id]
   (let [fetch-batch (partial clj-slack.conversations/history connection channel-id)]
     (loop [batch   (fetch-batch)
            history ()]
-      (let [history (into history (:messages batch))]
-        (if (contains? batch :has_more)
-          (let [cursor    (get-in batch [:response_metadata :next_cursor])
-                new-batch (fetch-batch {:cursor cursor})]
-            (recur new-batch history))
-          history)))))
+      (let [history (into history (:messages batch))
+            cursor  (get-in batch [:response_metadata :next_cursor])]
+        (if (or (nil? cursor) (empty? cursor))
+          history
+          (let [new-batch (fetch-batch {:cursor cursor})]
+            (recur new-batch history)))))))
 
 (defn fetch-logs [target connection]
   (let [logs-target (str target "/logs")]
