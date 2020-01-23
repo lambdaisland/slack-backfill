@@ -36,10 +36,19 @@
          (into {}))))
 
 (defn fetch-users [target connection]
-  (.mkdirs (io/file target))
-  (println "Fetching users data")
-  (let [users (clj-slack.users/list connection)]
-    (write-edn (str target "/users.edn") users)))
+  (let [fetch-batch (partial clj-slack.users/list connection)
+        filepath    (str target "/users.edn")]
+    (.mkdirs (io/file target))
+    (println "Fetching users data")
+    (loop [batch (fetch-batch)
+           users ()]
+      (let [users (into users (:members batch))]
+        (if (contains? batch :has_more)
+          (let [cursor    (get-in batch [:response_metadata :next_cursor])
+                new-batch (fetch-batch {:cursor cursor})]
+            (recur new-batch users))
+          (->> (map user->tx users)
+               (write-edn filepath)))))))
 
 (defn channel->tx [{:keys [id name created creator]}]
   #:channel {:slack-id id
@@ -47,6 +56,20 @@
              :created  created
              :creator  [:user/slack-id creator]})
 
+(defn fetch-channels [target connection]
+  (let [fetch-batch (partial clj-slack.conversations/list connection)
+        filepath    (str target "/channels.edn")]
+    (.mkdirs (io/file target))
+    (println "Fetching channels data")
+    (loop [batch    (fetch-batch)
+           channels ()]
+      (let [channels (into channels (:channels batch))]
+        (if (contains? batch :has_more)
+          (let [cursor    (get-in batch [:response_metadata :next_cursor])
+                new-batch (fetch-batch {:cursor cursor})]
+            (recur new-batch channels))
+          (->> (map channel->tx channels)
+               (write-edn filepath)))))))
 (defn fetch-channel-history [connection channel-id]
   (loop [batch   (clj-slack.conversations/history connection channel-id)
          history ()]
