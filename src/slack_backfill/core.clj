@@ -2,13 +2,14 @@
   (:require [clj-slack.conversations]
             [clj-slack.users]
             [cheshire.core :as cheshire]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.pprint :as pprint]))
 
 (defn write-edn [filepath data]
   (with-open [writer (io/writer filepath)]
     (binding [*print-length* false
-              *out* writer]
-      (pr data))))
+              *out*          writer]
+      (pprint/pprint data))))
 
 (defn fetch-channels [target connection]
   (.mkdirs (io/file target))
