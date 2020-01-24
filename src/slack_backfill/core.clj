@@ -44,7 +44,7 @@
            users ()]
       (let [users (into users (:members batch))
             cursor (get-in batch [:response_metadata :next_cursor])]
-        (if (or (nil? cursor) (empty? cursor))
+        (if (empty? cursor)
           (->> (map user->tx users)
                (write-edn filepath))
           (let [new-batch (fetch-batch {:cursor cursor})]
@@ -65,7 +65,7 @@
            channels ()]
       (let [channels (into channels (:channels batch))
             cursor (get-in batch [:response_metadata :next_cursor])]
-        (if (or (nil? cursor) (empty? cursor))
+        (if (empty? cursor)
           (->> (map channel->tx channels)
                (write-edn filepath))
           (let [new-batch (fetch-batch {:cursor cursor})]
@@ -77,7 +77,7 @@
            history ()]
       (let [history (into history (:messages batch))
             cursor  (get-in batch [:response_metadata :next_cursor])]
-        (if (or (nil? cursor) (empty? cursor))
+        (if (empty? cursor)
           history
           (let [new-batch (fetch-batch {:cursor cursor})]
             (recur new-batch history)))))))
