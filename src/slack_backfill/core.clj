@@ -86,11 +86,12 @@
   (let [logs-target (str target "/logs")]
     (.mkdirs (io/file logs-target))
     (let [conversations (clj-slack.conversations/list connection)
-          channel-ids   (map :id (:channels conversations))]
-      (doseq [channel-id channel-ids]
+          channel-ids   (:channels conversations)]
+      (doseq [{channel-id :id
+               channel-name :name} channel-ids]
         (println "Fetching" channel-id)
         (let [history (fetch-channel-history connection channel-id)]
-          (with-open [file (io/writer (str logs-target "/" channel-id ".txt"))]
+          (with-open [file (io/writer (str logs-target "/000_" channel-id "_" channel-name ".txt"))]
             (doseq [message history]
               (cheshire/generate-stream message file)
               (.write file "\n"))))))))
