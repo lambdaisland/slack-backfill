@@ -78,7 +78,7 @@
       (let [history (into history (:messages batch))
             cursor  (get-in batch [:response_metadata :next_cursor])]
         (if (empty? cursor)
-          history
+          (map #(assoc % :channel channel-id) history)
           (let [new-batch (fetch-batch {:cursor cursor})]
             (recur new-batch history)))))))
 
