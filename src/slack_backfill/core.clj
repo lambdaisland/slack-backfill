@@ -5,11 +5,14 @@
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]))
 
-(defn write-edn [filepath data]
-  (with-open [writer (io/writer filepath)]
-    (binding [*print-length* false
-              *out*          writer]
-      (pprint/pprint data))))
+(defn write-edn [data target filename]
+  (let [filepath (str target "/" filename ".edn")]
+    (.mkdirs (io/file target))
+    (println (str "Fetching " filename " data"))
+    (with-open [writer (io/writer filepath)]
+      (binding [*print-length* false
+                *out*          writer]
+        (pprint/pprint data)))))
 
 (defn user->tx [{:keys [id name is_admin is_owner profile]}]
   (let [{:keys [image_512 email real_name_normalized image_48 image_192
@@ -35,41 +38,33 @@
          (remove (comp nil? val))
          (into {}))))
 
-(defn fetch-users [target connection]
-  (let [fetch-batch (partial clj-slack.users/list connection)
-        filepath    (str target "/users.edn")]
-    (.mkdirs (io/file target))
-    (println "Fetching users data")
-    (loop [batch (fetch-batch)
-           users ()]
-      (let [users (into users (:members batch))
-            cursor (get-in batch [:response_metadata :next_cursor])]
-        (if (empty? cursor)
-          (->> (map user->tx users)
-               (write-edn filepath))
-          (let [new-batch (fetch-batch {:cursor cursor})]
-            (recur new-batch users)))))))
-
 (defn channel->tx [{:keys [id name created creator]}]
   #:channel {:slack-id id
              :name     name
              :created  created
              :creator  [:user/slack-id creator]})
 
-(defn fetch-channels [target connection]
-  (let [fetch-batch (partial clj-slack.conversations/list connection)
-        filepath    (str target "/channels.edn")]
-    (.mkdirs (io/file target))
-    (println "Fetching channels data")
-    (loop [batch    (fetch-batch)
-           channels ()]
-      (let [channels (into channels (:channels batch))
+(defn fetch-users [connection]
+  (let [fetch-batch (partial clj-slack.users/list connection)]
+    (loop [batch (fetch-batch)
+           result ()]
+      (let [result (into result (:members batch))
             cursor (get-in batch [:response_metadata :next_cursor])]
         (if (empty? cursor)
-          (->> (map channel->tx channels)
-               (write-edn filepath))
+          result
           (let [new-batch (fetch-batch {:cursor cursor})]
-            (recur new-batch channels)))))))
+            (recur new-batch result)))))))
+
+(defn fetch-channels [connection]
+  (let [fetch-batch (partial clj-slack.conversations/list connection)]
+    (loop [batch (fetch-batch)
+           result ()]
+      (let [result (into result (:channels batch))
+            cursor (get-in batch [:response_metadata :next_cursor])]
+        (if (empty? cursor)
+          result
+          (let [new-batch (fetch-batch {:cursor cursor})]
+            (recur new-batch result)))))))
 
 (defn fetch-channel-history [connection channel-id]
   (let [fetch-batch (partial clj-slack.conversations/history connection channel-id)]
@@ -82,29 +77,33 @@
           (let [new-batch (fetch-batch {:cursor cursor})]
             (recur new-batch history)))))))
 
-(defn fetch-logs [target connection]
+(defn fetch-and-write-logs [target channels connection]
   (let [logs-target (str target "/logs")]
     (.mkdirs (io/file logs-target))
-    (let [conversations (clj-slack.conversations/list connection)
-          channel-ids   (:channels conversations)]
-      (doseq [{channel-id :id
-               channel-name :name} channel-ids]
-        (println "Fetching" channel-id)
-        (let [history (fetch-channel-history connection channel-id)]
-          (with-open [file (io/writer (str logs-target "/000_" channel-id "_" channel-name ".txt"))]
-            (doseq [message history]
-              (cheshire/generate-stream message file)
-              (.write file "\n"))))))))
+    (doseq [{channel-id   :id
+             channel-name :name} channels]
+      (println "Fetching" channel-id)
+      (let [history (fetch-channel-history connection channel-id)]
+        (with-open [file (io/writer (str logs-target "/000_" channel-id "_" channel-name ".txt"))]
+          (doseq [message history]
+            (cheshire/generate-stream message file)
+            (.write file "\n")))))))
 
 (defn -main
   "Takes a path like /tmp/test (without a trailing slash), fetches users and
   channels data into path root and channel logs into a /logs subdirectory."
   [target]
   (let [slack-token (System/getenv "SLACK_TOKEN")
-        connection  {:api-url "https://slack.com/api" :token slack-token}]
-    (fetch-channels target connection)
-    (fetch-users target connection)
-    (fetch-logs target connection)))
+        connection  {:api-url "https://slack.com/api" :token slack-token}
+        users       (fetch-users connection)
+        channels    (fetch-channels connection)]
+    (-> (map user->tx users)
+        (write-edn target "users"))
+    (-> (map channel->tx channels)
+        (write-edn target "channels"))
+    (fetch-and-write-logs target channels connection)))
 
 (comment
-  (-main "/tmp/test"))
+  (let [target "/tmp/test"]
+    (.mkdirs (io/file target))
+    (-main target)))
