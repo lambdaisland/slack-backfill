@@ -1,9 +1,26 @@
 (ns slack-backfill.core
-  (:require [clj-slack.conversations]
-            [clj-slack.users]
+  (:require [clj-slack.conversations :as slack-conv]
+            [clj-slack.users :as slack-users]
             [cheshire.core :as cheshire]
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]))
+
+(defn wrap-rate-limit [f]
+  (fn invoke [& args]
+    (try
+      (apply f args)
+      (catch clojure.lang.ExceptionInfo ex
+        (let [data (ex-data ex)]
+          (if (= 429 (:status data))
+            (let [wait-for (Integer/parseInt (get-in data [:headers "retry-after"]))]
+              (println "rate-limited. Retry in" wait-for "seconds")
+              (Thread/sleep (* (inc wait-for) 1000))
+              (apply invoke args))
+            (throw ex)))))))
+
+(def slack-users-list (wrap-rate-limit slack-users/list))
+(def slack-conv-list (wrap-rate-limit slack-conv/list))
+(def slack-conv-history (wrap-rate-limit slack-conv/history))
 
 (defn write-edn [filepath data]
   (with-open [writer (io/writer filepath)]
@@ -36,7 +53,7 @@
          (into {}))))
 
 (defn fetch-users [target connection]
-  (let [fetch-batch (partial clj-slack.users/list connection)
+  (let [fetch-batch (partial slack-users-list connection)
         filepath    (str target "/users.edn")]
     (.mkdirs (io/file target))
     (println "Fetching users data")
@@ -57,7 +74,7 @@
              :creator  [:user/slack-id creator]})
 
 (defn fetch-channels [target connection]
-  (let [fetch-batch (partial clj-slack.conversations/list connection)
+  (let [fetch-batch (partial slack-conv-list connection)
         filepath    (str target "/channels.edn")]
     (.mkdirs (io/file target))
     (println "Fetching channels data")
@@ -72,7 +89,7 @@
             (recur new-batch channels)))))))
 
 (defn fetch-channel-history [connection channel-id]
-  (let [fetch-batch (partial clj-slack.conversations/history connection channel-id)]
+  (let [fetch-batch (partial slack-conv-history connection channel-id)]
     (loop [batch   (fetch-batch)
            history ()]
       (let [history (into history (:messages batch))
@@ -82,29 +99,41 @@
           (let [new-batch (fetch-batch {:cursor cursor})]
             (recur new-batch history)))))))
 
+(defn save-logs [conversations target connection]
+  (let [channel-ids   (:channels conversations)]
+    (doseq [{channel-id :id
+             channel-name :name} channel-ids]
+      (println "Fetching" channel-id)
+      (let [history (fetch-channel-history connection channel-id)]
+        (with-open [file (io/writer (str target "/000_" channel-id "_" channel-name ".txt"))]
+          (doseq [message history]
+            (cheshire/generate-stream message file)
+            (.write file "\n")))))))
+
 (defn fetch-logs [target connection]
   (let [logs-target (str target "/logs")]
     (.mkdirs (io/file logs-target))
-    (let [conversations (clj-slack.conversations/list connection)
-          channel-ids   (:channels conversations)]
-      (doseq [{channel-id :id
-               channel-name :name} channel-ids]
-        (println "Fetching" channel-id)
-        (let [history (fetch-channel-history connection channel-id)]
-          (with-open [file (io/writer (str logs-target "/000_" channel-id "_" channel-name ".txt"))]
-            (doseq [message history]
-              (cheshire/generate-stream message file)
-              (.write file "\n"))))))))
+    (loop [conversations (slack-conv-list connection)]
+      (save-logs conversations logs-target connection)
+      (let [cursor (get-in conversations [:response_metadata :next_cursor])]
+        (when (seq cursor)
+          (recur (slack-conv-list connection {:cursor cursor})))))))
+
+(defn conn
+  ([]
+   (conn (System/getenv "SLACK_TOKEN")))
+  ([slack-token]
+   {:api-url "https://slack.com/api" :token slack-token}))
 
 (defn -main
   "Takes a path like /tmp/test (without a trailing slash), fetches users and
   channels data into path root and channel logs into a /logs subdirectory."
   [target]
-  (let [slack-token (System/getenv "SLACK_TOKEN")
-        connection  {:api-url "https://slack.com/api" :token slack-token}]
+  (let [connection (conn)]
     (fetch-channels target connection)
     (fetch-users target connection)
     (fetch-logs target connection)))
 
 (comment
+  (fetch-logs "/tmp/backfill" (conn))
   (-main "/tmp/test"))
