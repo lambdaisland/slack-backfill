@@ -1,6 +1,7 @@
 (ns slack-backfill.core
   (:require [clj-slack.conversations :as slack-conv]
             [clj-slack.users :as slack-users]
+            [clj-slack.core :refer [slack-request stringify-keys]]
             [cheshire.core :as cheshire]
             [clojure.java.io :as io]
             [clojure.pprint :as pprint]))
@@ -18,7 +19,16 @@
               (apply invoke args))
             (throw ex)))))))
 
-(def slack-users-list (wrap-rate-limit slack-users/list))
+(defn slack-list-users
+  "like clj-slack.users/list, but supports extra arguments (for paginations)"
+  ([connection]
+   (slack-list-users connection {}))
+  ([connection optionals]
+   (->> optionals
+        stringify-keys
+        (slack-request connection "users.list"))))
+
+(def slack-users-list (wrap-rate-limit slack-list-users))
 (def slack-conv-list (wrap-rate-limit slack-conv/list))
 (def slack-conv-history (wrap-rate-limit slack-conv/history))
 
